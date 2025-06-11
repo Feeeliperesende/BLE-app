@@ -42,7 +42,6 @@ export const useBLE = (): UseBLEReturn => {
 
     initializeBLE();
 
-    // Event listeners
     const onDeviceDiscovered = (device: BLEDevice) => {
       setDevices(prev => {
         const exists = prev.find(d => d.id === device.id);
@@ -86,7 +85,7 @@ export const useBLE = (): UseBLEReturn => {
       setDevices([]);
       await BLEService.startScan();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao iniciar scan');
+      setError(err instanceof Error ? err.message : 'Error start scan');
     }
   }, []);
 
@@ -94,7 +93,7 @@ export const useBLE = (): UseBLEReturn => {
     try {
       await BLEService.stopScan();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao parar scan');
+      setError(err instanceof Error ? err.message : 'Error stop scan');
     }
   }, []);
 
@@ -103,7 +102,9 @@ export const useBLE = (): UseBLEReturn => {
       setError(null);
       await BLEService.connectToDevice(deviceId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao conectar');
+      setError(
+        err instanceof Error ? err.message : 'Erro to connect to device',
+      );
     }
   }, []);
 
@@ -111,7 +112,7 @@ export const useBLE = (): UseBLEReturn => {
     try {
       await BLEService.disconnect();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao desconectar');
+      setError(err instanceof Error ? err.message : 'Error disconnecting');
     }
   }, []);
 
@@ -120,7 +121,7 @@ export const useBLE = (): UseBLEReturn => {
       setError(null);
       await BLEService.sendMessage(message);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao enviar mensagem');
+      setError(err instanceof Error ? err.message : 'Error sending message');
     }
   }, []);
 

@@ -35,8 +35,8 @@ export const styles = StyleSheet.create({
     textShadowRadius: 2,
   },
   legend: {
-    marginTop: 15,
-    alignItems: 'center',
+    marginTop: 8,
+    fontSize: 12,
   },
   legendText: {
     fontSize: 12,

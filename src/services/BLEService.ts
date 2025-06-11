@@ -1,40 +1,25 @@
-import BleManager, {
-  BleManagerDidUpdateValueForCharacteristicEvent,
-  BleScanCallbackType,
-  BleScanMatchMode,
-  BleScanMode,
-  Peripheral,
-} from 'react-native-ble-manager';
+import {BleManager, Device, Characteristic} from 'react-native-ble-plx';
 import {EventEmitter} from 'events';
-import {
-  PermissionsAndroid,
-  Platform,
-  NativeEventEmitter,
-  NativeModules,
-} from 'react-native';
+import {PermissionsAndroid, Platform} from 'react-native';
 import {BLEDevice, BLEMessage, ConnectionStatus} from '../types/ble';
-
+import {Buffer} from 'buffer';
 class BLEService extends EventEmitter {
-  private bleManagerEmitter: NativeEventEmitter;
+  private readonly bleManager: BleManager;
   private isScanning: boolean = false;
-  private connectedDevice: string | null = null;
+  private connectedDevice: Device | null = null;
 
-  // UUIDs do Nordic UART Service
-  private readonly SERVICE_UUID = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E';
-  private readonly TX_CHARACTERISTIC_UUID =
-    '6E400002-B5A3-F393-E0A9-E50E24DCCA9E';
-  private readonly RX_CHARACTERISTIC_UUID =
-    '6E400003-B5A3-F393-E0A9-E50E24DCCA9E';
+  private readonly SERVICE_UUID = '9800';
+  private readonly TX_CHARACTERISTIC_UUID = '9801';
+  private readonly RX_CHARACTERISTIC_UUID = '9801';
 
   constructor() {
     super();
-    this.bleManagerEmitter = new NativeEventEmitter(NativeModules.BleManager);
+    this.bleManager = new BleManager();
     this.setupEventListeners();
   }
 
   async initialize(): Promise<void> {
     try {
-      await BleManager.start({showAlert: false});
       await this.requestPermissions();
       console.log('BLE Manager inicializado');
     } catch (error) {
@@ -69,84 +54,64 @@ class BLEService extends EventEmitter {
   }
 
   private setupEventListeners(): void {
-    this.bleManagerEmitter.addListener(
-      'BleManagerDiscoverPeripheral',
-      this.onDeviceDiscovered,
-    );
-    this.bleManagerEmitter.addListener('BleManagerStopScan', this.onScanStop);
-    this.bleManagerEmitter.addListener(
-      'BleManagerDisconnectPeripheral',
-      this.onDeviceDisconnected,
-    );
-    this.bleManagerEmitter.addListener(
-      'BleManagerDidUpdateValueForCharacteristic',
-      this.onDataReceived,
-    );
+    this.bleManager.onStateChange(state => {
+      console.log('BLE state changed:', state);
+    }, true);
   }
-
-  private readonly onDeviceDiscovered = (peripheral: Peripheral): void => {
-    const device: BLEDevice = {
-      id: peripheral.id,
-      name:
-        peripheral.name ||
-        peripheral.advertising?.localName ||
-        'Dispositivo Desconhecido',
-      rssi: peripheral.rssi,
-      advertising: peripheral.advertising,
-    };
-    this.emit('deviceDiscovered', device);
-  };
-
-  private readonly onScanStop = (): void => {
-    this.isScanning = false;
-    this.emit('scanStop');
-  };
-
-  private readonly onDeviceDisconnected = (): void => {
-    this.connectedDevice = null;
-    const status: ConnectionStatus = {
-      isConnected: false,
-    };
-    this.emit('connectionStatusChanged', status);
-  };
-
-  private readonly onDataReceived = (
-    data: BleManagerDidUpdateValueForCharacteristicEvent,
-  ): void => {
-    const message = this.bytesToString(data.value);
-    const bleMessage: BLEMessage = {
-      id: Date.now().toString(),
-      message,
-      timestamp: new Date(),
-      direction: 'received',
-    };
-    this.emit('messageReceived', bleMessage);
-  };
 
   async startScan(timeoutSeconds: number = 10): Promise<void> {
     if (this.isScanning) {
       return;
     }
-
     try {
       this.isScanning = true;
-      await BleManager.scan([], timeoutSeconds, false, {
-        matchMode: BleScanMatchMode.Sticky,
-        scanMode: BleScanMode.LowPower,
-        callbackType: BleScanCallbackType.AllMatches,
-      });
       this.emit('scanStart');
+
+      this.bleManager.stopDeviceScan();
+      this.bleManager.startDeviceScan(
+        [this.SERVICE_UUID],
+        {allowDuplicates: false},
+        (error, device) => {
+          if (error) {
+            console.error('Erro na varredura:', error);
+            this.isScanning = false;
+            this.emit('scanStop');
+            return;
+          }
+
+          if (device) {
+            this.onDeviceDiscovered(device);
+          }
+        },
+      );
+
+      setTimeout(() => {
+        this.stopScan();
+      }, timeoutSeconds * 1000);
     } catch (error) {
       this.isScanning = false;
       console.error('Erro ao iniciar scan:', error);
+      this.emit('scanStop');
       throw error;
     }
   }
 
+  private readonly onDeviceDiscovered = (device: Device): void => {
+    console.log('Peripheral Discovered:', JSON.stringify(device, null, 2));
+    const bleDevice: BLEDevice = {
+      id: device.id,
+      name: device.name ?? 'unknown device',
+      rssi: device.rssi as number | undefined,
+    };
+    this.emit('deviceDiscovered', bleDevice);
+  };
+
   async stopScan(): Promise<void> {
+    console.log('Parando scan...');
     try {
-      await BleManager.stopScan();
+      this.bleManager.stopDeviceScan();
       this.isScanning = false;
+      this.emit('scanStop');
     } catch (error) {
       console.error('Erro ao parar scan:', error);
       throw error;
@@ -155,25 +120,25 @@ class BLEService extends EventEmitter {
 
   async connectToDevice(deviceId: string): Promise<void> {
     try {
-      await BleManager.connect(deviceId);
-      await BleManager.retrieveServices(deviceId);
+      if (this.connectedDevice) {
+        await this.disconnect();
+      }
 
-      // Habilitar notificações
-      await BleManager.startNotification(
-        deviceId,
-        this.SERVICE_UUID,
-        this.RX_CHARACTERISTIC_UUID,
-      );
-
-      this.connectedDevice = deviceId;
-
-      const peripheralInfo = await BleManager.getConnectedPeripherals([]);
-      const device = peripheralInfo.find(p => p.id === deviceId);
+      const device = await this.bleManager.connectToDevice(deviceId);
+      this.connectedDevice = device;
+      await device.discoverAllServicesAndCharacteristics();
+      device.onDisconnected(error => {
+        if (error) {
+          console.error('Erro na desconexão:', error);
+        }
+        this.onDeviceDisconnected();
+      });
+      await this.setupNotifications(device);
 
       const status: ConnectionStatus = {
         isConnected: true,
         deviceId,
-        deviceName: device?.name || 'Dispositivo Conectado',
+        deviceName: device.name ?? 'unknown device',
       };
 
       this.emit('connectionStatusChanged', status);
@@ -183,18 +148,58 @@ class BLEService extends EventEmitter {
     }
   }
 
+  private async setupNotifications(device: Device): Promise<void> {
+    try {
+      device.monitorCharacteristicForService(
+        this.SERVICE_UUID,
+        this.RX_CHARACTERISTIC_UUID,
+        (error, characteristic) => {
+          if (error) {
+            console.error('Erro na notificação:', error);
+            return;
+          }
+          if (characteristic?.value) {
+            this.onDataReceived(characteristic);
+          }
+        },
+      );
+    } catch (error) {
+      console.error('Erro ao configurar notificações:', error);
+      throw error;
+    }
+  }
+
+  private readonly onDeviceDisconnected = (): void => {
+    this.connectedDevice = null;
+    const status: ConnectionStatus = {
+      isConnected: false,
+    };
+    this.emit('connectionStatusChanged', status);
+  };
+
+  private readonly onDataReceived = (characteristic: Characteristic): void => {
+    if (!characteristic.value) {
+      return;
+    }
+
+    const message = this.base64ToString(characteristic.value);
+    const bleMessage: BLEMessage = {
+      id: Date.now().toString(),
+      message,
+      timestamp: new Date(),
+      direction: 'received',
+    };
+    this.emit('messageReceived', bleMessage);
+  };
+
   async disconnect(): Promise<void> {
     if (!this.connectedDevice) {
       return;
     }
 
     try {
-      await BleManager.stopNotification(
-        this.connectedDevice,
-        this.SERVICE_UUID,
-        this.RX_CHARACTERISTIC_UUID,
-      );
-      await BleManager.disconnect(this.connectedDevice);
+      await this.connectedDevice.cancelConnection();
+      this.connectedDevice = null;
     } catch (error) {
       console.error('Erro ao desconectar:', error);
       throw error;
@@ -207,9 +212,8 @@ class BLEService extends EventEmitter {
     }
 
     try {
-      const data = this.stringToBytes(message);
-      await BleManager.write(
-        this.connectedDevice,
+      const data = this.stringToBase64(message);
+      await this.connectedDevice.writeCharacteristicWithResponseForService(
         this.SERVICE_UUID,
         this.TX_CHARACTERISTIC_UUID,
         data,
@@ -229,23 +233,28 @@ class BLEService extends EventEmitter {
     }
   }
 
-  private stringToBytes(str: string): number[] {
-    return Array.from(Buffer.from(str, 'utf8'));
+  private stringToBase64(str: string): string {
+    return Buffer.from(str, 'utf8').toString('base64');
   }
 
-  private bytesToString(bytes: number[]): string {
-    return Buffer.from(bytes).toString('utf8');
+  private base64ToString(base64: string): string {
+    return Buffer.from(base64, 'base64').toString('utf8');
   }
 
   getConnectionStatus(): ConnectionStatus {
     return {
       isConnected: !!this.connectedDevice,
-      deviceId: this.connectedDevice ?? undefined,
+      deviceId: this.connectedDevice?.id ?? undefined,
+      deviceName: this.connectedDevice?.name ?? undefined,
     };
   }
 
   isCurrentlyScanning(): boolean {
     return this.isScanning;
+  }
+
+  destroy() {
+    this.bleManager.destroy();
   }
 }
 
