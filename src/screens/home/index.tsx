@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 
-import {BLEDevice, BLEMessage, HeatmapDataPoint} from './../../types/ble';
+import {BLEDevice, BLEMessage} from './../../types/ble';
 import {styles} from './styles';
 import {useBLE} from '../../hooks/useBLE';
 import HeatmapChart from '../../components/heatmap';
@@ -44,23 +44,6 @@ export function Home() {
   } = useBLE();
 
   const [messageInput, setMessageInput] = React.useState<string>('');
-
-  console.log('Devices:', JSON.stringify(devices, null, 2));
-  const generateHeatmapData = (): HeatmapDataPoint[] => {
-    const data: HeatmapDataPoint[] = [];
-    for (let x = 0; x < 10; x++) {
-      for (let y = 0; y < 8; y++) {
-        data.push({
-          x,
-          y,
-          value: Math.random() * 100,
-        });
-      }
-    }
-    return data;
-  };
-
-  const [heatmapData] = useState<HeatmapDataPoint[]>(generateHeatmapData());
 
   const handleSendMessage = async () => {
     if (!messageInput.trim()) {
@@ -254,9 +237,11 @@ export function Home() {
           </View>
         )}
 
-        <View style={styles.section}>
-          <HeatmapChart data={devices} title="Heatmap" />
-        </View>
+        {devices.length > 0 && (
+          <View style={styles.section}>
+            <HeatmapChart data={devices} title="Heatmap" />
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
